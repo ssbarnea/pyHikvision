@@ -16,8 +16,6 @@ import sys, time, logging, os, tempfile
 import ctypes, ctypes.wintypes
 from ctypes import byref
 
-libc = ctypes.cdll.msvcrt
-
 class Video():
 
     error_codes = {
@@ -69,9 +67,9 @@ class Video():
         self.frames = None
         self.width = None
         self.height = None
-        self.__port = ctypes.c_uint()
-        self.hsdk.PlayM4_GetPort(byref(self.__port))
-        self.port = self.__port.value
+        port = ctypes.c_uint(0)
+        self.hsdk.PlayM4_GetPort(byref(port))
+        self.port = port.value
         self.format = 'bmp' # 'bmp' or 'jpg'
         self.indexed = False
         if self.port != 0:
