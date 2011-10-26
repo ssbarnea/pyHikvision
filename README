@@ -1,0 +1,23 @@
+Hikvision Player SDK usage
+==========================
+
+#01 load PlayCtrl.dll
+#02 call PlayM4_GetPort()
+#03 call PlayM4_SetFileRefCallBack()
+#04 call PlayM4_OpenFile()
+#05 waits for the callback to be called, so we know the file is indexed
+#06 call PlayM4_GetFileTime()
+#07 call PlayM4_GetFileTotalFrames()
+#08 call PlayM4_GetPictureSize()
+#09 call PlayM4_Play(port, 0)
+#10 PlayM4_SetCurrentFrameNum(port, 0)
+#11 PlayM4_Pause(port, 1)
+
+The above calling sequence seems to always work succesfully (no error codes reported).
+
+Now the problem is when we do:
+
+PlayM4_SetCurrentFrameNum(port, frame)
+real_fram = PlayM4_GetCurrentFrameNum(port)
+
+Now in some cases real_frame != frame

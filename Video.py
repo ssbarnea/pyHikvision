@@ -69,10 +69,13 @@ class Video():
         self.frames = None
         self.width = None
         self.height = None
-        self.__port = ctypes.c_int()
+        self.__port = ctypes.c_uint()
         self.hsdk.PlayM4_GetPort(byref(self.__port))
         self.port = self.__port.value
         self.format = 'bmp' # 'bmp' or 'jpg'
+        self.indexed = False
+        if self.port != 0:
+            logging.warn("Port is %s" % self.port)
 
     def getError(self):
         error_code = self.hsdk.PlayM4_GetLastError(self.port)
@@ -81,23 +84,38 @@ class Video():
         else:
             return "Error [%s]" % error_code
 
+
     def open(self, filename):
         """
         @param filename string containing the filename and eventually the path to the 264 video file. The file has to be encoded using Hikvision utilities.
         """
+        def cbFileRefDone(port, user_data):
+            self = ctypes.cast(user_data, ctypes.py_object).value
+            self.indexed = True
+            print "File indexed."
+
+
+        CALLBACK_FileRefDone = ctypes.WINFUNCTYPE(ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32)
+        if not self.hsdk.PlayM4_SetFileRefCallBack(self.port,  CALLBACK_FileRefDone(cbFileRefDone), ctypes.py_object(self)):
+            logging.error("Unable to set callback for indexing")
+            return False
+
         if not self.hsdk.PlayM4_OpenFile(self.port, filename):
             logging.error("Unable to open video file")
             return False
 
-        def __fileRefDone(port, userdata):
-            print "YUPPI!"
-            return 0
+        time.sleep(1)
+        while not self.indexed:
+            print "Waiting for indexing to finish..."
+            time.sleep(1)
 
-        CALLBACK_FileRefDone = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_int, ctypes.c_int)
-        callback_filerefdone = CALLBACK_FileRefDone(__fileRefDone)
-        if not self.hsdk.PlayM4_SetFileRefCallBack(self.port, callback_filerefdone, 0):
-            logging.error("Unable to set callback for indexing")
-            return False
+#        if os.path.isfile(filename + "sync"):
+#            logging.info("Index file detected, loading it.")
+#            f = open(filename + "sync", "rb")
+#            s = f.read()
+#            p = ctypes.create_string_buffer(s, len(s))
+#            if not self.hsdk.PlayM4_SetRefValue(self.port, byref(p), len(s)):
+#                logging.error("Unable to set sync file.")
 
         self.seconds = self.hsdk.PlayM4_GetFileTime(self.port)
         self.frames = self.hsdk.PlayM4_GetFileTotalFrames(self.port)
@@ -124,6 +142,9 @@ class Video():
         self.pBmpSize = ctypes.c_int()
         self.pBmpSize.value = 0
 
+        return self.__goToFirstFrame()
+
+    def __goToFirstFrame(self):
         if not self.hsdk.PlayM4_Play(self.port, 0): # required, otherwise setframe will fail
             logging.error("Failed to initialize play. %s" % self.getError())
             return False
@@ -132,9 +153,9 @@ class Video():
             logging.error("Failed to set current frame num. %s" % self.getError())
             return False
 
-#        if not self.hsdk.PlayM4_OneByOne(self.port): # required, otherwise setframe will fail
-#            logging.error("Failed to initialize play one-by-one. %s" % self.getError())
-#            return False
+            #        if not self.hsdk.PlayM4_OneByOne(self.port): # required, otherwise setframe will fail
+            #            logging.error("Failed to initialize play one-by-one. %s" % self.getError())
+            #            return False
 
         if not self.hsdk.PlayM4_Pause (self.port, 1): # also required
             logging.error("Failed to pause playback. %s" % self.getError())
@@ -142,15 +163,19 @@ class Video():
 
         return True
 
+
     def __del__(self):
+        """
         if self.pBitmap:
             ctypes.cdll.msvcrt.free(self.pBitmap)
             self.pBitmap = 0
 
-        self.hsdk.PlayM4_FreePort(self.port)
-
         if self.hsdk:
             self.hsdk.PlayM4_CloseFile(self.port)
+
+        self.hsdk.PlayM4_FreePort(self.port)
+        """
+        pass
 
     def __len__(self):
         # Returns the number of frames in the video.
@@ -165,7 +190,30 @@ class Video():
     def setCurrentFrameNum(self, frame):
         ret = video.hsdk.PlayM4_SetCurrentFrameNum (self.port, frame)
         if not ret:
-            logging.warn("PlayM4_SetCurrentFrameNum() returned %s. %s" % (x, self.getError()))
+            logging.error("PlayM4_SetCurrentFrameNum() returned %s. %s" % (ret, self.getError()))
+        real_frame = self.getCurrentFrameNum()
+        if real_frame == -1 or real_frame != frame:
+            logging.error("PlayM4_SetCurrentFrameNum() failed to set the exact frame.")
+            return False
+
+        if not ret or real_frame != frame:
+            # here is an ugly workaround that works, go to first frame and go onebyone until we reach the desired frame, slow but works!
+            while real_frame != frame:
+                #print "%s <> %s" % (real_frame, frame)
+                if real_frame > frame:
+                    if not self.hsdk.PlayM4_OneByOneBack(self.port):
+                        logging.error("PlayM4_OneByOneBack failed. Error %s" % self.getError())
+                        return False
+                else:
+                    if not self.hsdk.PlayM4_OneByOne(self.port):
+                        logging.error("PlayM4_OneByOne failed. Error %s" % self.getError())
+                        return False
+                real_frame = self.getCurrentFrameNum()
+
+            if frame != self.getCurrentFrameNum():
+                logging.error("Final frame [%s] is not the expected one [%s]." % (self.getCurrentFrameNum(), frame) )
+                return False
+
         return ret
 
 
@@ -222,25 +270,33 @@ class Video():
 
     def __str__(self):
         abs_frames = self.hsdk.PlayM4_GetAbsFrameNum(self.port)
-        return "Video of %s seconds, %s:%s frames, %sx%s : %s" % (self.seconds, self.frames, abs_frames, self.width, self.height, self.filename)
+        return "Video of %s seconds, %s frames, %sx%s : %s" % (self.seconds, self.frames, self.width, self.height, self.filename)
 
 if __name__ == '__main__':
+    logging.getLogger().setLevel(logging.DEBUG)
     video = Video()
     sample_video_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "test", "sample.264")
     if not video.open(sample_video_file):
         print("Failed to open video file: [%s]" % sample_video_file)
         sys.exit(-1)
+
+    # display information about the video
     print video
+
+    # display number of frames in video
     #print len(video)
+
     #for i in video:
     #    print i
     #myfile = video.saveFrame()
     #print myfile
     #video.hsdk.PlayM4_SetCurrentFrameNum (0, 10)
 
-    for i in range(0,50):
+    for i in range(len(video)-100, len(video)):
+        sys.stdout.write("Frame: %s\n" % i)
         video.setCurrentFrameNum(i)
         real_frame = video.getCurrentFrameNum()
 
         if i != real_frame:
-            print i, real_frame
+            print "Expect %s but got %s" % (i, real_frame)
+
