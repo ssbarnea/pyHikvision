@@ -299,7 +299,7 @@ if __name__ == '__main__':
     #video.hsdk.PlayM4_SetCurrentFrameNum (0, 10)
 
     # putting first and last 5 frames into `frames` list
-    frames = range(2,5)
+    frames = range(0,5)
     frames.extend(range(len(video)-5,len(video)))
 
     print frames
